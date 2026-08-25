@@ -2788,3 +2788,50 @@ def test_apply_client_processing_csv_format_default_na_behavior():
     assert (
         "Alice," in lines[2]
     )  # Second data row should have empty last_name (NA converted to null)
+
+
+def test_apply_client_processing_xlsx_round_trip():
+    """
+    Test that xlsx payloads survive client-side post-processing.
+
+    Excel payloads reach post-processing as already-serialized bytes, so they
+    must be read back into a frame and re-serialized afterwards. Without the
+    xlsx branches the decode step raises ``UnboundLocalError``.
+    """
+    from io import BytesIO
+
+    from superset.utils.excel import df_to_excel
+
+    source_df = pd.DataFrame(
+        {
+            "first_name": ["Alice", "Bob"],
+            "last_name": ["Smith", "Jones"],
+        }
+    )
+    result = {
+        "queries": [
+            {
+                "result_format": ChartDataResultFormat.XLSX,
+                "data": df_to_excel(source_df, index=False),
+                "colnames": ["first_name", "last_name"],
+                "coltypes": [GenericDataType.STRING, GenericDataType.STRING],
+            }
+        ]
+    }
+    form_data = {
+        "datasource": "1__table",
+        "viz_type": "table",
+        "slice_id": 1,
+        "columns": ["first_name", "last_name"],
+        "result_format": "xlsx",
+        "result_type": "post_processed",
+    }
+
+    processed_result = apply_client_processing(result, form_data)
+
+    # The payload must still be valid xlsx bytes, and readable back.
+    output_data = processed_result["queries"][0]["data"]
+    assert isinstance(output_data, bytes)
+    round_tripped = pd.read_excel(BytesIO(output_data))
+    assert list(round_tripped["first_name"]) == ["Alice", "Bob"]
+    assert list(round_tripped["last_name"]) == ["Smith", "Jones"]
